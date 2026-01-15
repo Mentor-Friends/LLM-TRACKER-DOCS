@@ -1,0 +1,154 @@
+# a2a-llm-tracker
+
+Track LLM usage and costs across providers (OpenAI, Gemini, Anthropic, etc.) from a single place.
+
+## Installation
+
+```bash
+pip install a2a-llm-tracker
+```
+
+## Quick Start (Recommended Pattern)
+
+For applications making multiple LLM calls, use a singleton pattern to initialize once and reuse everywhere.
+
+### Step 1: Create a tracking module
+
+Create `tracking.py` in your project:
+
+```python
+# tracking.py
+from dotenv import load_dotenv
+import os
+import asyncio
+import concurrent.futures
+
+load_dotenv()
+
+_meter = None
+
+def get_meter():
+    """Get or initialize the global meter singleton."""
+    global _meter
+    if _meter is None:
+        try:
+            from a2a_llm_tracker import init
+
+            client_id = os.getenv("CLIENT_ID", "")
+            client_secret = os.getenv("CLIENT_SECRET", "")
+            client_server = os.getenv("CLIENT_SERVER", "https://a2aorchestra.com")
+
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(
+                    asyncio.run,
+                    init(client_id, client_secret, "my-app", client_server)
+                )
+                _meter = future.result(timeout=5)
+
+        except Exception as e:
+            print(f"LLM tracking initialization failed: {e}")
+            return None
+    return _meter
+```
+
+### Step 2: Use it anywhere
+
+```python
+import os
+from openai import OpenAI
+from tracking import get_meter
+
+def call_openai(prompt: str):
+    client = OpenAI()
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    # Track usage
+    try:
+        from a2a_llm_tracker import analyze_response, ResponseType
+
+        meter = get_meter()
+        agent_id = os.getenv("AGENT_ID")  # Add AGENT_ID to your .env file
+
+        if meter:
+            analyze_response(response, ResponseType.OPENAI, meter, agent_id=agent_id)
+    except Exception as e:
+        print("LLM tracking skipped")
+
+    return response
+```
+
+### Environment Variables
+
+Set your credentials in `.env` file or export them:
+
+```bash
+CLIENT_ID=your_client_id
+CLIENT_SECRET=your_client_secret
+CLIENT_SERVER=https://a2aorchestra.com  # optional, this is the default
+AGENT_ID=my-agent  # optional, for tracking which agent made the call
+OPENAI_API_KEY=sk-xxxxx
+```
+
+## Query Total Usage & Costs
+
+Retrieve your accumulated costs and token usage from CCS:
+
+```python
+import os
+import asyncio
+from a2a_llm_tracker import init
+from a2a_llm_tracker.sources import CCSSource
+
+async def get_total_usage():
+    client_id = os.getenv("CLIENT_ID")
+    client_secret = os.getenv("CLIENT_SECRET")
+
+    await init(
+        client_id=client_id,
+        client_secret=client_secret,
+        application_name="my-app",
+    )
+
+    source = CCSSource(int(client_id))
+    total_cost = await source.count_cost()
+    total_tokens = await source.count_total_tokens()
+
+    print(f"Total cost: ${total_cost:.4f}")
+    print(f"Total tokens: {total_tokens}")
+
+asyncio.run(get_total_usage())
+```
+
+## Supported Providers
+
+| Provider | ResponseType |
+|----------|-------------|
+| OpenAI | `ResponseType.OPENAI` |
+| Google Gemini | `ResponseType.GEMINI` |
+| Anthropic | `ResponseType.ANTHROPIC` |
+| Cohere | `ResponseType.COHERE` |
+| Mistral | `ResponseType.MISTRAL` |
+| Groq | `ResponseType.GROQ` |
+| Together AI | `ResponseType.TOGETHER` |
+| AWS Bedrock | `ResponseType.BEDROCK` |
+| Google Vertex AI | `ResponseType.VERTEX` |
+
+## Documentation
+
+Full documentation available on GitHub:
+
+- [LiteLLM Wrapper](https://github.com/Mentor-Friends/a2a-tracker/blob/main/docs/litellm-wrapper.md) - Auto-tracking via LiteLLM
+- [CCS Integration](https://github.com/Mentor-Friends/a2a-tracker/blob/main/docs/ccs-integration.md) - Centralized tracking setup
+- [Response Analysis](https://github.com/Mentor-Friends/a2a-tracker/blob/main/docs/response-analysis.md) - Direct SDK tracking
+- [Pricing](https://github.com/Mentor-Friends/a2a-tracker/blob/main/docs/pricing.md) - Custom pricing configuration
+- [Building](https://github.com/Mentor-Friends/a2a-tracker/blob/main/docs/building.md) - Development and publishing
+
+## What This Package Does NOT Do
+
+- Guess exact billing from raw text
+- Replace provider SDKs
+- Upload data anywhere automatically
+- Require a backend or SaaS
